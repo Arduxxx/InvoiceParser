@@ -218,3 +218,20 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# --- InvoiceFlow specific ---
+data/
+fatture_vere/
+*.p7m
+*.db
+*.sqlite
+*.sqlite3
+.cache/
+vies_cache*
+.venv/
+venv/
+.env
+.idea/
+.vscode/
+.DS_Store
