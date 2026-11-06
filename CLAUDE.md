@@ -57,6 +57,7 @@ make install
 - `make lint` — ruff
 - `make typecheck` — mypy (strict)
 - `make cov` — tests with coverage
+- `make generate OUT=data/generated/run1 N=1000 SEED=42` — fake invoices + `labels.csv`
 - `make check` — lint + typecheck + test; **must pass before every commit/PR**
 
 Without an activated venv: `make check PYTHON=.venv/bin/python`.
@@ -66,6 +67,7 @@ Without an activated venv: `make check PYTHON=.venv/bin/python`.
 - `src/invoiceflow/importers/` — XML, `.p7m`, PDF readers
 - `src/invoiceflow/checks/` — arithmetic, VAT number, IBAN, date checks
 - `src/invoiceflow/antifraud/` — fraud rules
+- `src/invoiceflow/generator/` — fake-invoice generator (labelled errors, duplicates, frauds)
 - `src/invoiceflow/money.py` — money helpers (integer cents / `Decimal`)
 - `src/invoiceflow/dashboard.py` — Streamlit entry point
 - `tests/unit/` — regular pytest tests; `tests/property/` — hypothesis tests on generated invoices
