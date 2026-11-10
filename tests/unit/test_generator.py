@@ -220,11 +220,14 @@ def test_cli_writes_invoices_and_labels(tmp_path: Path, capsys: pytest.CaptureFi
     out = tmp_path / "run"
     assert main(["--out", str(out), "--n", "50", "--seed", "1"]) == 0
     assert "Wrote 50 invoices" in capsys.readouterr().out
-    assert len(list(out.glob("*.xml"))) == 50
+    assert not list(out.glob("*.xml"))  # XMLs live in invoices/, apart from the labels
+    assert len(list((out / "invoices").glob("*.xml"))) == 50
     with open(out / "labels.csv", encoding="utf-8", newline="") as f:
         rows = list(csv.DictReader(f))
     assert len(rows) == 50
+    assert all(row["file"].startswith("invoices/") for row in rows)
     assert all((out / row["file"]).is_file() for row in rows)
+    assert all((out / row["duplicate_of"]).is_file() for row in rows if row["duplicate_of"])
     assert (out / "suppliers.csv").is_file()
 
 

@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from invoiceflow.generator.dataset import DatasetConfig, generate_dataset
-from invoiceflow.generator.output import write_dataset
+from invoiceflow.generator.output import INVOICES_DIR, write_dataset
 
 
 def _rate(text: str) -> float:
@@ -33,7 +33,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     out: Path = args.out
-    if out.exists() and any(out.glob("*.xml")):
+    if any(out.glob("*.xml")) or any((out / INVOICES_DIR).glob("*.xml")):
         parser.error(f"{out} already contains invoices; choose an empty directory")
 
     config = DatasetConfig(
