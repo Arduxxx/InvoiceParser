@@ -28,7 +28,8 @@ class Line:
     quantita: Decimal | None = None    # opzionale nello schema
     unita_misura: str = ""
     prezzo_unitario: Decimal           # fino a 8 decimali
-    prezzo_totale_cents: int           # PrezzoTotale, 2 decimali
+    prezzo_totale: Decimal             # PrezzoTotale, da 2 a 8 decimali: si arrotonda
+                                       # al centesimo solo la somma (ImponibileImporto)
     aliquota_iva: Decimal              # percentuale, es. Decimal("22.00")
     natura: str = ""                   # N1..N7, obbligatorio se aliquota == 0
 

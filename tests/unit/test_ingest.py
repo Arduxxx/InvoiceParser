@@ -66,9 +66,9 @@ def test_amounts_are_stored_as_integer_cents(folder: Path, connection: sqlite3.C
     ).fetchone()
     assert (total, kind) == (12852, "integer")
     prices = connection.execute(
-        "SELECT prezzo_unitario FROM lines ORDER BY rowid LIMIT 2"
+        "SELECT prezzo_unitario, prezzo_totale FROM lines ORDER BY rowid LIMIT 2"
     ).fetchall()
-    assert prices == [("4.50",), ("18.00",)]  # Decimal kept exactly, as text
+    assert prices == [("4.50", "90.00"), ("18.00", "18.00")]  # Decimal kept exactly, as text
 
 
 def test_command_line(folder: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -43,7 +43,7 @@ def test_reads_lines_vat_summary_and_payments() -> None:
         Decimal("20.00"),
         Decimal("4.50"),
     )
-    assert (first.prezzo_totale_cents, first.aliquota_iva) == (9000, Decimal("22.00"))
+    assert (first.prezzo_totale, first.aliquota_iva) == (Decimal("90.00"), Decimal("22.00"))
     assert second.descrizione == "Manuale di contabilità"  # accented letters survive
     summaries = [(s.aliquota_iva, s.imponibile_cents, s.imposta_cents) for s in invoice.vat_summary]
     assert summaries == [(Decimal("22.00"), 9000, 1980), (Decimal("4.00"), 1800, 72)]
@@ -54,6 +54,16 @@ def test_reads_lines_vat_summary_and_payments() -> None:
     ]
     assert invoice.payments[0].modalita == "MP05"
     assert invoice.payments[0].iban == "IT60X0542811101000000123456"
+
+
+def test_line_totals_keep_all_their_decimals() -> None:
+    # PrezzoTotale may have up to 8 decimals; rounding each line to the cent would make
+    # three lines of 0.333333 add up to 0.99 instead of the 1.00 of ImponibileImporto.
+    xml = sample_bytes().replace(
+        b"<PrezzoTotale>90.00</PrezzoTotale>", b"<PrezzoTotale>0.33333333</PrezzoTotale>"
+    )
+    [invoice] = parse_invoices(xml)
+    assert invoice.lines[0].prezzo_totale == Decimal("0.33333333")
 
 
 def test_source_is_recorded() -> None:

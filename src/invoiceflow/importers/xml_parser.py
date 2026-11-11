@@ -111,7 +111,7 @@ def _line(element: ET.Element) -> Line:
         quantita=None if quantita is None else _decimal(quantita),
         unita_misura=_text(element, "UnitaMisura"),
         prezzo_unitario=_decimal(_required(element, "PrezzoUnitario")),
-        prezzo_totale_cents=to_cents(_decimal(_required(element, "PrezzoTotale"))),
+        prezzo_totale=_decimal(_required(element, "PrezzoTotale")),
         aliquota_iva=_decimal(_required(element, "AliquotaIVA")),
         natura=_text(element, "Natura"),
     )

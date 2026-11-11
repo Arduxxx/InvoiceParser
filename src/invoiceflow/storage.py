@@ -1,8 +1,8 @@
 """SQLite archive of imported invoices.
 
 Columns are named like the fields of invoiceflow.model (and so like the FatturaPA elements).
-Amounts are stored as integer cents; quantities, unit prices and VAT rates as text, so that
-a Decimal goes in and comes out exactly.
+Amounts are stored as integer cents; quantities, unit prices, line totals (up to 8 decimals)
+and VAT rates as text, so that a Decimal goes in and comes out exactly.
 
 Loading the same file twice does not duplicate anything: every invoice remembers the
 SHA-256 of the file it came from and its position in that file. The same invoice arriving
@@ -47,7 +47,7 @@ CREATE TABLE IF NOT EXISTS lines (
     quantita TEXT,
     unita_misura TEXT NOT NULL,
     prezzo_unitario TEXT NOT NULL,
-    prezzo_totale_cents INTEGER NOT NULL,
+    prezzo_totale TEXT NOT NULL,
     aliquota_iva TEXT NOT NULL,
     natura TEXT NOT NULL
 );
@@ -127,7 +127,7 @@ def save_invoice(connection: sqlite3.Connection, invoice: Invoice, position_in_f
                     None if line.quantita is None else str(line.quantita),
                     line.unita_misura,
                     str(line.prezzo_unitario),
-                    line.prezzo_totale_cents,
+                    str(line.prezzo_totale),
                     str(line.aliquota_iva),
                     line.natura,
                 )

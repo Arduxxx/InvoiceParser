@@ -33,11 +33,12 @@ def broken_rules(invoice: Invoice) -> set[str]:
     broken: set[str] = set()
     for line in invoice.lines:
         assert line.quantita is not None
-        if _round_cents(line.quantita * line.prezzo_unitario) != line.prezzo_totale_cents:
+        if _round_cents(line.quantita * line.prezzo_unitario) != _round_cents(line.prezzo_totale):
             broken.add("line_total")
     for s in invoice.vat_summary:
-        lines_sum = sum(ln.prezzo_totale_cents for ln in invoice.lines
-                        if (ln.aliquota_iva, ln.natura) == (s.aliquota_iva, s.natura))
+        same_rate = [ln.prezzo_totale for ln in invoice.lines
+                     if (ln.aliquota_iva, ln.natura) == (s.aliquota_iva, s.natura)]
+        lines_sum = _round_cents(sum(same_rate, Decimal(0)))
         if lines_sum != s.imponibile_cents:
             broken.add("taxable_amount")
         if _round_cents(Decimal(s.imponibile_cents) / 100 * s.aliquota_iva / 100) \

@@ -201,7 +201,7 @@ def make_line(numero_linea: int, product: Product, quantity: Decimal) -> Line:
         quantita=quantity,
         unita_misura=product.unit,
         prezzo_unitario=product.unit_price,
-        prezzo_totale_cents=to_cents(quantity * product.unit_price),
+        prezzo_totale=from_cents(to_cents(quantity * product.unit_price)),
         aliquota_iva=product.vat_rate,
         natura=product.natura,
     )
@@ -209,16 +209,16 @@ def make_line(numero_linea: int, product: Product, quantity: Decimal) -> Line:
 
 def summarize(lines: Sequence[Line]) -> list[VatSummary]:
     """One DatiRiepilogo per (rate, natura), with exactly rounded Imposta."""
-    groups: dict[tuple[Decimal, str], int] = {}
+    groups: dict[tuple[Decimal, str], Decimal] = {}
     for line in lines:
         key = (line.aliquota_iva, line.natura)
-        groups[key] = groups.get(key, 0) + line.prezzo_totale_cents
+        groups[key] = groups.get(key, Decimal(0)) + line.prezzo_totale
     return [
         VatSummary(
             aliquota_iva=rate,
             natura=natura,
-            imponibile_cents=imponibile,
-            imposta_cents=vat_amount_cents(imponibile, rate),
+            imponibile_cents=to_cents(imponibile),
+            imposta_cents=vat_amount_cents(to_cents(imponibile), rate),
             esigibilita_iva="" if natura else "I",
         )
         for (rate, natura), imponibile in sorted(groups.items())

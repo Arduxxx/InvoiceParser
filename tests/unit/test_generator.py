@@ -70,7 +70,7 @@ def test_money_is_never_float() -> None:
     assert isinstance(inv.importo_totale_cents, int)
     for line in inv.lines:
         assert isinstance(line.prezzo_unitario, Decimal)
-        assert isinstance(line.prezzo_totale_cents, int)
+        assert isinstance(line.prezzo_totale, Decimal)
 
 
 # --- errors ----------------------------------------------------------------------------------
