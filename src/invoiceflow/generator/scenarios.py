@@ -14,7 +14,7 @@ from random import Random
 from invoiceflow.generator.core import SupplierProfile, assemble_invoice, company_party, make_line
 from invoiceflow.generator.ids import random_italian_iban
 from invoiceflow.model import Invoice, Line
-from invoiceflow.money import from_cents
+from invoiceflow.money import from_cents, to_cents
 
 ERROR_KINDS: tuple[str, ...] = (
     "line_total",             # one PrezzoTotale != Quantita x PrezzoUnitario
@@ -56,10 +56,11 @@ def corrupt(invoice: Invoice, rng: Random, kind: str | None = None) -> tuple[Inv
     if kind == "line_total":
         i = rng.randrange(len(invoice.lines))
         line = invoice.lines[i]
-        new = line.prezzo_totale_cents + _amount_delta(rng, line.prezzo_totale_cents)
+        old = to_cents(line.prezzo_totale)
+        new = old + _amount_delta(rng, old)
         lines = list(invoice.lines)
-        lines[i] = replace(line, prezzo_totale_cents=new)
-        detail = (f"line {line.numero_linea} PrezzoTotale {from_cents(line.prezzo_totale_cents)}"
+        lines[i] = replace(line, prezzo_totale=from_cents(new))
+        detail = (f"line {line.numero_linea} PrezzoTotale {line.prezzo_totale}"
                   f" -> {from_cents(new)}")
         return replace(invoice, lines=lines), kind, detail
     if kind in ("vat_amount", "taxable_amount"):

@@ -94,7 +94,7 @@ def invoice_to_xml(invoice: Invoice, progressivo_invio: str) -> bytes:
         if line.unita_misura:
             _sub(dettaglio, "UnitaMisura", line.unita_misura)
         _sub(dettaglio, "PrezzoUnitario", format_decimal(line.prezzo_unitario))
-        _sub(dettaglio, "PrezzoTotale", format_amount(line.prezzo_totale_cents))
+        _sub(dettaglio, "PrezzoTotale", format_decimal(line.prezzo_totale))
         _sub(dettaglio, "AliquotaIVA", format_decimal(line.aliquota_iva))
         if line.natura:
             _sub(dettaglio, "Natura", line.natura)
