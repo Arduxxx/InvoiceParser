@@ -13,9 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from invoiceflow import storage
-from invoiceflow.importers.model import Invoice
 from invoiceflow.importers.p7m import extract_xml
 from invoiceflow.importers.xml_parser import InvoiceFormatError, parse_invoices
+from invoiceflow.model import Invoice
 
 
 @dataclass
@@ -34,22 +34,22 @@ def invoice_files(folder: Path) -> list[Path]:
     )
 
 
-def read_invoices(file_name: str, data: bytes) -> list[Invoice]:
-    """The invoices in one file; data are its raw bytes (the XML declares its encoding)."""
-    if file_name.lower().endswith(".p7m"):
+def read_invoices(path: Path, data: bytes) -> list[Invoice]:
+    """The invoices in one file; data are its raw bytes (the XML declares its encoding).
+    The hash is taken on the raw bytes, so a .p7m is recognised as the file it is."""
+    digest = hashlib.sha256(data).hexdigest()
+    if path.name.lower().endswith(".p7m"):
         data = extract_xml(data)
-    return parse_invoices(data)
+    return parse_invoices(data, source_path=path.as_posix(), source_sha256=digest)
 
 
 def ingest_folder(folder: Path, connection: sqlite3.Connection) -> IngestReport:
     report = IngestReport()
     for path in invoice_files(folder):
         try:
-            data = path.read_bytes()
-            invoices = read_invoices(path.name, data)
-            digest = hashlib.sha256(data).hexdigest()
+            invoices = read_invoices(path, path.read_bytes())
             for position, invoice in enumerate(invoices):
-                if storage.save_invoice(connection, invoice, path.name, digest, position):
+                if storage.save_invoice(connection, invoice, position):
                     report.imported += 1
                 else:
                     report.already_present += 1
