@@ -7,6 +7,7 @@ This is the sequential version; spreading the work over several cores comes late
 """
 
 import argparse
+import csv
 import hashlib
 import sqlite3
 from dataclasses import dataclass, field
@@ -58,16 +59,33 @@ def ingest_folder(folder: Path, connection: sqlite3.Connection) -> IngestReport:
     return report
 
 
+def load_categories(csv_path: Path, connection: sqlite3.Connection) -> int:
+    """Read supplier categories from a CSV with columns partita_iva and category (the
+    suppliers.csv written by the generator has them). Returns how many were applied."""
+    applied = 0
+    with open(csv_path, encoding="utf-8", newline="") as file:
+        for row in csv.DictReader(file):
+            if storage.set_category(connection, row["partita_iva"], row["category"]):
+                applied += 1
+    return applied
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Import FatturaPA invoices into SQLite.")
     parser.add_argument("folder", type=Path, help="folder with .xml / .xml.p7m files")
     parser.add_argument("--db", type=Path, default=Path("data") / "invoiceflow.sqlite")
+    parser.add_argument(
+        "--categories", type=Path, help="CSV with columns partita_iva,category (optional)"
+    )
     args = parser.parse_args(argv)
     if not args.folder.is_dir():
         parser.error(f"{args.folder} is not a folder")
     connection = storage.connect(args.db)
     try:
         report = ingest_folder(args.folder, connection)
+        if args.categories:
+            applied = load_categories(args.categories, connection)
+            print(f"Set the category of {applied} suppliers.")
     finally:
         connection.close()
     print(f"Imported {report.imported} invoices, {report.already_present} already present.")
