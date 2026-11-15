@@ -66,6 +66,10 @@ CREATE TABLE IF NOT EXISTS payments (
     importo_cents INTEGER,
     iban TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS supplier_categories (
+    cedente_id INTEGER PRIMARY KEY REFERENCES cedenti (id),
+    category TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS invoices_by_cedente ON invoices (cedente_id, importo_totale_cents);
 """
 
@@ -162,6 +166,18 @@ def save_invoice(connection: sqlite3.Connection, invoice: Invoice, position_in_f
             ],
         )
     return True
+
+
+def set_category(connection: sqlite3.Connection, partita_iva: str, category: str) -> bool:
+    """Give a spending category (e.g. "software") to a known supplier.
+    Returns False if no supplier has that VAT number."""
+    with connection:
+        cursor = connection.execute(
+            "INSERT OR REPLACE INTO supplier_categories (cedente_id, category)"
+            " SELECT id, ? FROM cedenti WHERE partita_iva = ?",
+            (category.strip(), partita_iva.strip()),
+        )
+    return cursor.rowcount > 0
 
 
 def _cedente_id(connection: sqlite3.Connection, cedente: Party) -> int:
