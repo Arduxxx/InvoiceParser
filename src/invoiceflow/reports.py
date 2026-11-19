@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date
 
+from invoiceflow import storage
 from invoiceflow.money import from_cents
 
 UNCATEGORISED = "(no category)"
@@ -42,9 +43,7 @@ def load_spend(connection: sqlite3.Connection, skip_ids: set[int]) -> list[Spend
     the sum of taxable amount and VAT of its summaries."""
     rows = connection.execute(
         "SELECT i.id, i.data, c.nome, sc.category, i.tipo_documento,"
-        " COALESCE(i.importo_totale_cents,"
-        "   (SELECT SUM(v.imponibile_cents + v.imposta_cents)"
-        "    FROM vat_summary v WHERE v.invoice_id = i.id), 0)"
+        f" {storage.INVOICE_TOTAL_CENTS}"
         " FROM invoices i JOIN cedenti c ON c.id = i.cedente_id"
         " LEFT JOIN supplier_categories sc ON sc.cedente_id = c.id"
         " ORDER BY i.data"
