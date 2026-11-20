@@ -2,7 +2,7 @@
 # or override: make test PYTHON=.venv/bin/python
 PYTHON ?= python
 
-.PHONY: install test run lint typecheck cov check generate import duplicates
+.PHONY: install test run lint typecheck cov check generate import duplicates frauds
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -41,3 +41,6 @@ import:
 
 duplicates:
 	$(PYTHON) -m invoiceflow.duplicates --db $(DB)
+
+frauds:
+	$(PYTHON) -m invoiceflow.antifraud --db $(DB)

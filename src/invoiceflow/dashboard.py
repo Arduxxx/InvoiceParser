@@ -1,8 +1,9 @@
 """Streamlit dashboard entry point (run with `make run`).
 
 Reads the SQLite archive filled by the importer and shows: spend by month, supplier and
-category; payments coming due; invoices uploaded more than once. Extra copies of a
-duplicated invoice are left out of every total, so nothing is counted twice.
+category; payments coming due; suspicious invoices (anti-fraud rules); invoices uploaded more
+than once. Extra copies of a duplicated invoice are left out of every total, so nothing is
+counted twice.
 """
 
 import sqlite3
@@ -12,6 +13,7 @@ from pathlib import Path
 import streamlit as st
 
 from invoiceflow import reports, storage
+from invoiceflow.antifraud import find_frauds
 from invoiceflow.duplicates import explain, find_duplicates, load_invoices
 
 
@@ -47,11 +49,13 @@ def show(connection: sqlite3.Connection) -> None:
     duplicates = find_duplicates(load_invoices(connection))
     extra_copies = {invoice.id for group in duplicates for invoice in group[1:]}
     spends = reports.load_spend(connection, skip_ids=extra_copies)
+    flags = find_frauds(connection)
 
-    left, middle, right = st.columns(3)
-    left.metric("Invoices", len(spends))
-    middle.metric("Total spend", reports.euros(sum(s.amount_cents for s in spends)))
-    right.metric("Duplicates found", len(extra_copies))
+    invoices, total, copies, suspicious = st.columns(4)
+    invoices.metric("Invoices", len(spends))
+    total.metric("Total spend", reports.euros(sum(s.amount_cents for s in spends)))
+    copies.metric("Duplicates found", len(extra_copies))
+    suspicious.metric("Suspicious invoices", len({flag.invoice_id for flag in flags}))
 
     st.header("Spend by month")
     bar_chart(reports.total_by(spends, reports.by_month), "month", biggest_first=False)
@@ -78,6 +82,12 @@ def show(connection: sqlite3.Connection) -> None:
             ],
             hide_index=True,
         )
+
+    st.header("Suspicious invoices")
+    if not flags:
+        st.write("No invoice looks suspicious.")
+    for flag in flags:
+        st.error(f"**{flag.rule.replace('_', ' ')}**: {flag.message}")
 
     st.header("Duplicates")
     if not duplicates:

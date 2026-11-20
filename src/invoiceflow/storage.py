@@ -74,6 +74,15 @@ CREATE INDEX IF NOT EXISTS invoices_by_cedente ON invoices (cedente_id, importo_
 """
 
 
+# SQL for the total of invoice "i". ImportoTotaleDocumento is optional: when it is missing,
+# the total is rebuilt from the VAT summaries (taxable amount + VAT).
+INVOICE_TOTAL_CENTS = (
+    "COALESCE(i.importo_totale_cents,"
+    " (SELECT SUM(v.imponibile_cents + v.imposta_cents)"
+    " FROM vat_summary v WHERE v.invoice_id = i.id), 0)"
+)
+
+
 def connect(path: Path) -> sqlite3.Connection:
     """Open (and if needed create) the archive."""
     path.parent.mkdir(parents=True, exist_ok=True)
