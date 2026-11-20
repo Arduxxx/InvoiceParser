@@ -1,9 +1,10 @@
 """Streamlit dashboard entry point (run with `make run`).
 
 Reads the SQLite archive filled by the importer and shows: spend by month, supplier and
-category; payments coming due; suspicious invoices (anti-fraud rules); invoices uploaded more
-than once. Extra copies of a duplicated invoice are left out of every total, so nothing is
-counted twice.
+category; payments coming due; invoices that failed the checks; suspicious invoices (anti-fraud
+rules); invoices uploaded more than once. Extra copies of a duplicated invoice are left out of
+every total, so nothing is counted twice, and so are invoices that failed the checks: their
+amounts cannot be trusted until the supplier corrects them.
 """
 
 import sqlite3
@@ -48,12 +49,15 @@ def main() -> None:
 def show(connection: sqlite3.Connection) -> None:
     duplicates = find_duplicates(load_invoices(connection))
     extra_copies = {invoice.id for group in duplicates for invoice in group[1:]}
-    spends = reports.load_spend(connection, skip_ids=extra_copies)
+    problems = storage.load_problems(connection)
+    with_errors = {problem.invoice_id for problem in problems}
+    spends = reports.load_spend(connection, skip_ids=extra_copies | with_errors)
     flags = find_frauds(connection)
 
-    invoices, total, copies, suspicious = st.columns(4)
+    invoices, total, errors, copies, suspicious = st.columns(5)
     invoices.metric("Invoices", len(spends))
     total.metric("Total spend", reports.euros(sum(s.amount_cents for s in spends)))
+    errors.metric("Failed the checks", len(with_errors))
     copies.metric("Duplicates found", len(extra_copies))
     suspicious.metric("Suspicious invoices", len({flag.invoice_id for flag in flags}))
 
@@ -81,6 +85,17 @@ def show(connection: sqlite3.Connection) -> None:
                 for p in due
             ],
             hide_index=True,
+        )
+
+    st.header("Invoices that failed the checks")
+    if not problems:
+        st.write("Every invoice passes the checks.")
+    else:
+        st.caption("Left out of the spend until the supplier sends a corrected invoice.")
+    for problem in problems:
+        reasons = "\n".join(f"- {finding.message}" for finding in problem.findings)
+        st.warning(
+            f"**{problem.supplier}**, invoice {problem.numero} of {problem.data}:\n\n{reasons}"
         )
 
     st.header("Suspicious invoices")
