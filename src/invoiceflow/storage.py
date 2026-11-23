@@ -4,6 +4,9 @@ Columns are named like the fields of invoiceflow.model (and so like the FatturaP
 Amounts are stored as integer cents; quantities, unit prices, line totals (up to 8 decimals)
 and VAT rates as text, so that a Decimal goes in and comes out exactly.
 
+The problems found by the checks when the invoice was imported are stored with it, in the
+findings table, so the dashboard can list them without checking every invoice again.
+
 Loading the same file twice does not duplicate anything: every invoice remembers the
 SHA-256 of the file it came from and its position in that file. The same invoice arriving
 in a *different* file is stored again on purpose: finding those duplicates is a separate
@@ -11,8 +14,11 @@ check, which needs to see both copies.
 """
 
 import sqlite3
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
+from invoiceflow.checks.finding import Finding
 from invoiceflow.model import Invoice, Party
 
 SCHEMA = """
@@ -70,6 +76,13 @@ CREATE TABLE IF NOT EXISTS supplier_categories (
     cedente_id INTEGER PRIMARY KEY REFERENCES cedenti (id),
     category TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS findings (
+    invoice_id INTEGER NOT NULL REFERENCES invoices (id),
+    rule TEXT NOT NULL,
+    field TEXT NOT NULL,
+    message TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS findings_by_invoice ON findings (invoice_id);
 CREATE INDEX IF NOT EXISTS invoices_by_cedente ON invoices (cedente_id, importo_totale_cents);
 """
 
@@ -97,9 +110,15 @@ def display_name(party: Party) -> str:
     return party.denominazione or f"{party.nome} {party.cognome}".strip()
 
 
-def save_invoice(connection: sqlite3.Connection, invoice: Invoice, position_in_file: int) -> bool:
-    """Store one invoice with its lines, VAT summaries and payments, all or nothing.
-    Returns False if it was already there (same source file, same position in it)."""
+def save_invoice(
+    connection: sqlite3.Connection,
+    invoice: Invoice,
+    position_in_file: int,
+    findings: Sequence[Finding] = (),
+) -> bool:
+    """Store one invoice with its lines, VAT summaries, payments and the problems the checks
+    found in it, all or nothing. Returns False if it was already there (same source file,
+    same position in it)."""
     with connection:  # one transaction: commit at the end, rollback on any error
         already = connection.execute(
             "SELECT 1 FROM invoices WHERE source_sha256 = ? AND position_in_file = ?",
@@ -174,7 +193,41 @@ def save_invoice(connection: sqlite3.Connection, invoice: Invoice, position_in_f
                 for p in invoice.payments
             ],
         )
+        connection.executemany(
+            "INSERT INTO findings VALUES (?, ?, ?, ?)",
+            [(invoice_id, f.code, f.field, f.message) for f in findings],
+        )
     return True
+
+
+@dataclass(frozen=True)
+class InvoiceProblems:
+    """An archived invoice that failed one or more checks, with what is wrong."""
+
+    invoice_id: int
+    supplier: str
+    numero: str
+    data: str  # ISO date
+    source_path: str
+    findings: tuple[Finding, ...]
+
+
+def load_problems(connection: sqlite3.Connection) -> list[InvoiceProblems]:
+    """Every archived invoice with at least one finding, oldest first."""
+    rows = connection.execute(
+        "SELECT i.id, c.nome, i.numero, i.data, i.source_path, f.rule, f.field, f.message"
+        " FROM findings f JOIN invoices i ON i.id = f.invoice_id"
+        " JOIN cedenti c ON c.id = i.cedente_id"
+        " ORDER BY i.data, i.id, f.rowid"
+    ).fetchall()
+    grouped: dict[int, tuple[tuple[str, str, str, str], list[Finding]]] = {}
+    for invoice_id, supplier, numero, data, source, rule, field, message in rows:
+        _, findings = grouped.setdefault(invoice_id, ((supplier, numero, data, source), []))
+        findings.append(Finding(rule, field, message))
+    return [
+        InvoiceProblems(invoice_id, *about, tuple(findings))
+        for invoice_id, (about, findings) in grouped.items()
+    ]
 
 
 def set_category(connection: sqlite3.Connection, partita_iva: str, category: str) -> bool:

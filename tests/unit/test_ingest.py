@@ -95,3 +95,44 @@ def test_imports_the_invoices_of_the_generator(
         original.cedente,
         original.lines,
     )
+
+
+def test_problems_found_by_the_checks_are_stored(
+    folder: Path, connection: sqlite3.Connection
+) -> None:
+    wrong = SAMPLE.read_bytes().replace(b"2026/123", b"2026/300")
+    wrong = wrong.replace(b"<ImportoTotaleDocumento>128.52", b"<ImportoTotaleDocumento>130.00")
+    wrong = wrong.replace(b"<CAP>20121</CAP>", b"<CAP>2012</CAP>")  # breaks the XSD
+    (folder / "wrong.xml").write_bytes(wrong)
+
+    report = ingest_folder(folder, connection)
+    assert (report.imported, report.with_problems) == (3, 1)
+
+    [problem] = storage.load_problems(connection)
+    assert (problem.numero, problem.supplier) == ("2026/300", "Alfa Forniture S.r.l.")
+    codes = [finding.code for finding in problem.findings]
+    assert codes == ["schema", "document_total", "payment_amount"]
+    assert "CAP" in problem.findings[0].message
+
+
+def test_loading_twice_does_not_duplicate_the_problems(
+    folder: Path, connection: sqlite3.Connection
+) -> None:
+    wrong = SAMPLE.read_bytes().replace(
+        b"<ImportoTotaleDocumento>128.52", b"<ImportoTotaleDocumento>1.00"
+    )
+    (folder / "wrong.xml").write_bytes(wrong.replace(b"2026/123", b"2026/300"))
+    ingest_folder(folder, connection)
+    ingest_folder(folder, connection)
+    assert connection.execute("SELECT COUNT(*) FROM findings").fetchone() == (2,)
+
+
+def test_generated_errors_are_stored_and_correct_invoices_are_clean(
+    tmp_path: Path, connection: sqlite3.Connection
+) -> None:
+    dataset = generate_dataset(DatasetConfig(n_invoices=300, seed=9))
+    write_dataset(dataset, tmp_path / "generated")
+    ingest_folder(tmp_path / "generated" / "invoices", connection)
+    flagged = {Path(problem.source_path).stem for problem in storage.load_problems(connection)}
+    planted = {g.file_id for g in dataset.invoices if g.label == "error"}
+    assert flagged == planted
