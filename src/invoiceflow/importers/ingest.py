@@ -1,9 +1,9 @@
-"""Imports a folder of FatturaPA files (.xml and .xml.p7m) into the SQLite archive.
+"""Imports a folder of invoices (FatturaPA .xml and .xml.p7m, Italian .pdf) into SQLite.
 
     python -m invoiceflow.importers.ingest data/real --db data/invoiceflow.sqlite
 
-Every invoice is checked while it is imported (official XSD schema, amounts, VAT numbers,
-IBANs, dates) and the problems found are stored with it, for the dashboard.
+Every invoice is checked while it is imported (amounts, VAT numbers, IBANs, dates, and the
+official XSD schema for XML files) and the problems found are stored with it, for the dashboard.
 A file that cannot be read is reported and skipped; the others are imported anyway.
 This is the sequential version; spreading the work over several cores comes later.
 """
@@ -19,6 +19,7 @@ from invoiceflow import storage
 from invoiceflow.checks import check_invoice
 from invoiceflow.checks.schema import schema_findings
 from invoiceflow.importers.p7m import extract_xml
+from invoiceflow.importers.pdf_parser import parse_pdf_invoice
 from invoiceflow.importers.xml_parser import InvoiceFormatError, parse_invoices
 from invoiceflow.model import Invoice
 
@@ -32,20 +33,26 @@ class IngestReport:
 
 
 def invoice_files(folder: Path) -> list[Path]:
-    """The .xml and .xml.p7m files in folder and its subfolders, in a stable order."""
+    """The .xml, .xml.p7m and .pdf files in folder and its subfolders, in a stable order."""
     return sorted(
         path
         for path in folder.rglob("*")
-        if path.is_file() and path.name.lower().endswith((".xml", ".xml.p7m"))
+        if path.is_file() and path.name.lower().endswith((".xml", ".xml.p7m", ".pdf"))
     )
 
 
 def read_invoices(path: Path, data: bytes) -> list[Invoice]:
     """The invoices in one file; data are its raw bytes (the XML declares its encoding).
     The hash is taken on the raw bytes, so a .p7m is recognised as the file it is."""
+    if _is_pdf(path):
+        return [parse_pdf_invoice(data, source_path=path.as_posix(), source_sha256=_sha256(data))]
     return parse_invoices(
         _xml_of(path, data), source_path=path.as_posix(), source_sha256=_sha256(data)
     )
+
+
+def _is_pdf(path: Path) -> bool:
+    return path.name.lower().endswith(".pdf")
 
 
 def _xml_of(path: Path, data: bytes) -> bytes:
@@ -61,10 +68,9 @@ def ingest_folder(folder: Path, connection: sqlite3.Connection) -> IngestReport:
     for path in invoice_files(folder):
         try:
             data = path.read_bytes()
-            xml = _xml_of(path, data)
-            invoices = parse_invoices(xml, source_path=path.as_posix(), source_sha256=_sha256(data))
-            # the schema looks at the whole file, the other checks at each invoice in it
-            file_findings = schema_findings(xml)
+            invoices = read_invoices(path, data)
+            # the schema looks at the whole XML file, the other checks at each invoice in it
+            file_findings = [] if _is_pdf(path) else schema_findings(_xml_of(path, data))
             for position, invoice in enumerate(invoices):
                 findings = file_findings + check_invoice(invoice)
                 if storage.save_invoice(connection, invoice, position, findings):
@@ -90,7 +96,7 @@ def load_categories(csv_path: Path, connection: sqlite3.Connection) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Import FatturaPA invoices into SQLite.")
-    parser.add_argument("folder", type=Path, help="folder with .xml / .xml.p7m files")
+    parser.add_argument("folder", type=Path, help="folder with .xml / .xml.p7m / .pdf files")
     parser.add_argument("--db", type=Path, default=Path("data") / "invoiceflow.sqlite")
     parser.add_argument(
         "--categories", type=Path, help="CSV with columns partita_iva,category (optional)"
