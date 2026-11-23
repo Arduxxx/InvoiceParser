@@ -2,7 +2,7 @@
 # or override: make test PYTHON=.venv/bin/python
 PYTHON ?= python
 
-.PHONY: install test run lint typecheck cov check generate import duplicates frauds
+.PHONY: install test run lint typecheck cov check generate import duplicates frauds anonymize
 
 install:
 	$(PYTHON) -m pip install -e ".[dev]"
@@ -44,3 +44,9 @@ duplicates:
 
 frauds:
 	$(PYTHON) -m invoiceflow.antifraud --db $(DB)
+
+# Anonymized copies of real invoices; the originals are only read
+ORIGINALS ?= data/originals
+ANONYMIZED ?= data/real/xml
+anonymize:
+	$(PYTHON) -m invoiceflow.anonymize $(ORIGINALS) $(ANONYMIZED)
