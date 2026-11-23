@@ -1,9 +1,10 @@
-"""Makes anonymized copies of real FatturaPA invoices (.xml and .xml.p7m).
+"""Makes anonymized copies of real invoices (.xml, .xml.p7m and .pdf).
 
     python -m invoiceflow.anonymize data/originals data/real/xml
 
-The originals are only read. Every copy is a plain .xml: a .p7m is unwrapped first, so its
-signature and the signer's certificate are left behind.
+The originals are only read. XML copies go to the target folder as plain .xml: a .p7m is
+unwrapped first, so its signature and the signer's certificate are left behind. PDFs are rebuilt
+by pdf_redact.py and go to a "pdf" folder next to the target.
 
 The idea is an allow-list. Each value in the invoice is either
 - KEPT, because the checks need it (amounts, dates, VAT rates, invoice number, codes);
@@ -40,7 +41,8 @@ from invoiceflow.checks.schema import schema_findings
 from invoiceflow.generator.ids import random_italian_iban, random_partita_iva
 from invoiceflow.importers.p7m import extract_xml
 from invoiceflow.importers.xml_parser import InvoiceFormatError, parse_invoices
-from invoiceflow.model import Invoice
+from invoiceflow.model import Invoice, Party
+from invoiceflow.pdf_redact import Fakes, redact_pdf
 
 _KEPT_FIELDS = """
     FormatoTrasmissione IdPaese RegimeFiscale Nazione TipoDocumento Divisa Data Numero
@@ -73,7 +75,7 @@ MUST_NOT_LEAK = (*NAMES, "IdCodice", "CodiceFiscale", "IBAN", "Indirizzo")
 MIN_LEAK_LENGTH = 5
 
 
-class Anonymizer:
+class Anonymizer(Fakes):
     """Turns real values into fake ones, always the same for the same value and key."""
 
     def __init__(self, key: bytes) -> None:
@@ -163,24 +165,72 @@ def anonymize_folder(
     source, target = source.resolve(), target.resolve()
     if target == source or target.is_relative_to(source) or source.is_relative_to(target):
         raise ValueError("the output folder must be separate from the originals")
+    pdf_target = target.with_name("pdf")
+    if pdf_target == source or pdf_target.is_relative_to(source):
+        raise ValueError("the output folder must be separate from the originals")
     anonymizer = Anonymizer(load_key(key_file))
-    target.mkdir(parents=True, exist_ok=True)
+    paths = sorted(path for path in source.rglob("*") if path.is_file())
+    xml_paths = [p for p in paths if p.name.lower().endswith((".xml", ".xml.p7m"))]
+    pdf_paths = [p for p in paths if p.name.lower().endswith(".pdf")]
+    names = known_names(xml_paths, anonymizer)  # so PDFs get the same fake names as the XML
     written, existing = 0, 0
     errors: list[tuple[str, str]] = []
-    for path in sorted(source.rglob("*")):
-        if not (path.is_file() and path.name.lower().endswith((".xml", ".xml.p7m"))):
-            continue
+    for path in [*xml_paths, *pdf_paths]:
         try:
-            name, copy = anonymized_file(path, anonymizer)
+            if path in xml_paths:
+                folder = target
+                name, copy = anonymized_file(path, anonymizer)
+            else:
+                folder = pdf_target
+                data = path.read_bytes()
+                copy, vat = redact_pdf(data, anonymizer, names)
+                name = f"{'IT' + vat if vat else 'PDF'}_{anonymizer.token(data)}.pdf"
         except (ValueError, OSError, etree.LxmlError) as error:
             errors.append((path.name, str(error)))
             continue
-        if (target / name).exists():
+        folder.mkdir(parents=True, exist_ok=True)
+        if (folder / name).exists():
             existing += 1
         else:
-            (target / name).write_bytes(copy)
+            (folder / name).write_bytes(copy)
             written += 1
     return written, existing, errors
+
+
+def known_names(paths: list[Path], anonymizer: Anonymizer) -> dict[str, str]:
+    """Real party name -> its fake, from the XML files, the same fake their copies use."""
+    people: dict[str, str] = {}
+    companies: dict[str, str] = {}
+    for path in paths:
+        try:
+            data = path.read_bytes()
+            xml = extract_xml(data) if path.name.lower().endswith(".p7m") else data
+            invoices = parse_invoices(xml)
+        except (ValueError, OSError):
+            continue  # reported when this file is anonymized
+        for invoice in invoices:
+            for party in (invoice.cedente, invoice.cessionario):
+                found = companies if party.denominazione else people
+                for real, fake in _party_names(party, anonymizer).items():
+                    found[real.casefold()] = fake
+    # a sole trader can be "Mario Rossi" as a company and as a person: the printed
+    # "Denominazione" must get the same fake as in the XML copy
+    return {**people, **companies}
+
+
+def _party_names(party: Party, anonymizer: Anonymizer) -> dict[str, str]:
+    owner = party.partita_iva or party.codice_fiscale
+    if party.denominazione:
+        fake = anonymizer.word("Denominazione", owner or party.denominazione)
+        return {party.denominazione: f"Azienda {fake}"}
+    first = anonymizer.word("Nome", party.nome)
+    last = anonymizer.word("Cognome", party.cognome)
+    return {
+        f"{party.nome} {party.cognome}": f"{first} {last}",
+        f"{party.cognome} {party.nome}": f"{last} {first}",
+        party.nome: first,  # the SdI view prints them on separate lines
+        party.cognome: last,
+    }
 
 
 def load_key(path: Path) -> bytes:
@@ -208,7 +258,10 @@ def _replace_names(root: etree._Element, anonymizer: Anonymizer) -> None:
         owner = block.findtext(".//{*}IdCodice") or block.findtext("{*}CodiceFiscale") or ""
         for tag in NAMES:
             for element in block.iterfind(f".//{{*}}{tag}"):
-                fake = anonymizer.word(tag, owner.strip() or element.text or "")
+                # a company is keyed on its VAT number; a person's name part on itself, so that
+                # two people sharing a surname get the same fake surname in XML and PDF copies
+                key = owner.strip() if tag == "Denominazione" else ""
+                fake = anonymizer.word(tag, key or element.text or "")
                 element.text = f"Azienda {fake}" if tag == "Denominazione" else fake
 
 
@@ -277,7 +330,7 @@ def _wrong_last_digit(value: str) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Make anonymized copies of real invoices.")
-    parser.add_argument("source", type=Path, help="folder with the original .xml / .xml.p7m")
+    parser.add_argument("source", type=Path, help="folder with the original .xml / .xml.p7m / .pdf")
     parser.add_argument("target", type=Path, help="folder for the anonymized copies")
     parser.add_argument("--key", type=Path, default=Path("data") / "anonymize.key")
     args = parser.parse_args(argv)

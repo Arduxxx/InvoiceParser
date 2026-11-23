@@ -1,15 +1,26 @@
+import io
 from pathlib import Path
 
+import pdfplumber
 import pytest
+from reportlab.pdfgen import canvas
 
 from invoiceflow import storage
-from invoiceflow.anonymize import Anonymizer, anonymize_folder, anonymize_xml, load_key, main
+from invoiceflow.anonymize import (
+    Anonymizer,
+    anonymize_folder,
+    anonymize_xml,
+    known_names,
+    load_key,
+    main,
+)
 from invoiceflow.antifraud import find_frauds
 from invoiceflow.checks import check_invoice, iban_is_valid, partita_iva_is_valid
 from invoiceflow.checks.schema import schema_findings
 from invoiceflow.generator import DatasetConfig, generate_dataset, write_dataset
 from invoiceflow.importers.ingest import ingest_folder
 from invoiceflow.importers.xml_parser import InvoiceFormatError, parse_invoices
+from invoiceflow.pdf_redact import redact_pdf
 from tests.unit.test_p7m import make_p7m
 from tests.unit.test_xml_parser import SAMPLE
 
@@ -126,3 +137,113 @@ def test_the_rules_find_the_same_things_on_the_copies(tmp_path: Path) -> None:
         connection.close()
         results.append((report.imported, report.with_problems, rules))
     assert results[0] == results[1]
+
+
+# ---- PDF ------------------------------------------------------------------------------------
+
+PDF_LINES = [
+    "Alfa Forniture S.r.l.",
+    "Via Segreta 12 Milano",
+    "Partita IVA: IT01234567897",
+    "Spett.le Mario Bianchi",
+    "Codice fiscale BNCMRA80A01F205X",
+    "Tel 0212345678 info@alfa.example",
+    "Fattura n. 2026/123 del 15/10/2026",
+    "Consulenza riservata 22% 90,00 19,80",
+    "Totale documento EUR 109,80",
+    "IBAN IT60 X054 2811 1010 0000 0123 456",
+]
+
+
+def pdf_with(lines: list[str]) -> bytes:
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer)
+    pdf.setAuthor("Mario Bianchi")
+    pdf.linkURL("https://secret.example", (40, 700, 200, 720))
+    for number, line in enumerate(lines):
+        pdf.drawString(40, 780 - 16 * number, line)
+    pdf.save()
+    return buffer.getvalue()
+
+
+def text_of(pdf: bytes) -> str:
+    with pdfplumber.open(io.BytesIO(pdf)) as document:
+        return "\n".join(page.extract_text() or "" for page in document.pages)
+
+
+def test_pdf_keeps_facts_and_loses_identities() -> None:
+    names = {"Alfa Forniture S.r.l.": "Azienda Fake"}
+    copy, vat = redact_pdf(pdf_with(PDF_LINES), ANONYMIZER, names)
+    text = text_of(copy)
+    for fact in ("2026/123", "15/10/2026", "22%", "90,00", "19,80", "109,80", "Azienda Fake"):
+        assert fact in text
+    for secret in ("Alfa", "Segreta", "01234567897", "Bianchi", "BNCMRA", "0212345678",
+                   "alfa.example", "riservata", "IT60", "0542811"):
+        assert secret not in text
+    assert vat == ANONYMIZER.vat_number("01234567897")
+    assert f"IT{vat}" in text and ANONYMIZER.iban("IT60X0542811101000000123456") in text
+
+
+def test_pdf_metadata_and_links_are_not_copied() -> None:
+    copy, _ = redact_pdf(pdf_with(PDF_LINES), ANONYMIZER, {})
+    assert b"Mario" not in copy and b"secret.example" not in copy
+    with pdfplumber.open(io.BytesIO(copy)) as document:
+        assert document.pages[0].annots == []
+
+
+def test_pdf_number_under_a_table_header_is_kept() -> None:
+    lines = ["Partita IVA 01234567897", "Numero documento Data documento",
+             "FT00012 15/10/2026", "Totale 10,00"]
+    assert "FT00012" in text_of(redact_pdf(pdf_with(lines), ANONYMIZER, {})[0])
+
+
+def test_pdf_words_a_narrow_gap_apart_stay_separate() -> None:
+    buffer = io.BytesIO()
+    pdf = canvas.Canvas(buffer)
+    pdf.drawString(40, 780, "Partita IVA 01234567897")
+    pdf.drawString(40, 760, "Imponibile: 90.00")  # the space is narrower than the tolerance
+    pdf.save()
+    assert "Imponibile: 90.00" in text_of(redact_pdf(buffer.getvalue(), ANONYMIZER, {})[0])
+
+
+def test_pdf_in_the_official_view_keeps_its_labels() -> None:
+    lines = ["Identificativo fiscale ai fini IVA: IT01234567897", "Numero civico: 12",
+             "Numero documento: FT7", "Nr. linea: 1", "Valore unitario: 25.00",
+             "Telefono del trasmittente: 0212345678"]
+    text = text_of(redact_pdf(pdf_with(lines), ANONYMIZER, {})[0])
+    for kept in ("Identificativo fiscale ai fini IVA:", "Numero documento: FT7", "Nr. linea: 1",
+                 "Valore unitario: 25.00"):
+        assert kept in text
+    assert "12" not in text.split("Numero documento")[0].split("IVA:")[0]
+    assert "civico" not in text and "0212345678" not in text
+
+
+def test_a_name_used_as_company_and_as_person_keeps_the_company_fake(tmp_path: Path) -> None:
+    company = SAMPLE.read_bytes().replace(b"Alfa Forniture S.r.l.", b"mario bianchi")
+    person = SAMPLE.read_bytes().replace(
+        b"<Denominazione>Alfa Forniture S.r.l.</Denominazione>",
+        b"<Nome>Mario</Nome><Cognome>Bianchi</Cognome>",
+    )
+    (tmp_path / "a_person.xml").write_bytes(person)
+    (tmp_path / "b_company.xml").write_bytes(company)
+    names = known_names(sorted(tmp_path.iterdir()), ANONYMIZER)
+    assert names["mario bianchi"].startswith("Azienda ")  # whatever the capitals
+
+
+def test_unreadable_and_empty_pdfs_are_refused() -> None:
+    with pytest.raises(InvoiceFormatError, match="not a readable PDF"):
+        redact_pdf(b"not a pdf", ANONYMIZER, {})
+    with pytest.raises(InvoiceFormatError, match="no text"):
+        redact_pdf(pdf_with([]), ANONYMIZER, {})
+
+
+def test_folder_writes_pdfs_next_to_the_xml(tmp_path: Path) -> None:
+    source = tmp_path / "in"
+    source.mkdir()
+    (source / SAMPLE.name).write_bytes(SAMPLE.read_bytes())
+    (source / "IT01234567897_1.pdf").write_bytes(pdf_with(PDF_LINES))
+    target = tmp_path / "real" / "xml"
+    assert anonymize_folder(source, target, tmp_path / "a.key")[0] == 2
+    [copy] = (tmp_path / "real" / "pdf").iterdir()
+    assert "01234567897" not in copy.name
+    assert "Alfa" not in text_of(copy.read_bytes())  # known from the XML file
