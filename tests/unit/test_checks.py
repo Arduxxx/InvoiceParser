@@ -97,6 +97,32 @@ def test_document_total_and_payments() -> None:
     assert codes(replace(invoice, importo_totale_cents=None)) == []
 
 
+def test_taxable_amount_allows_one_cent_of_rounding() -> None:
+    invoice = sample()
+    line = replace(invoice.lines[0], prezzo_totale=Decimal("90.01"))
+    assert codes(replace(invoice, lines=[line, invoice.lines[1]])) == []
+
+
+def test_taxable_amount_two_cents_off_is_reported() -> None:
+    invoice = sample()
+    line = replace(invoice.lines[0], prezzo_totale=Decimal("90.02"))
+    assert "taxable_amount" in codes(replace(invoice, lines=[line, invoice.lines[1]]))
+
+
+def test_payment_net_of_withholding_tax_is_correct() -> None:
+    invoice = replace(sample(), ritenuta_cents=2160)
+    net = [replace(payment, importo_cents=5346) for payment in invoice.payments]
+    assert codes(replace(invoice, payments=net)) == []
+    assert codes(invoice) == []  # the full total is accepted too
+
+
+def test_payment_matching_neither_total_nor_net_is_reported() -> None:
+    invoice = replace(sample(), ritenuta_cents=2160)
+    wrong = [replace(payment, importo_cents=5000) for payment in invoice.payments]
+    [finding] = check_invoice(replace(invoice, payments=wrong))
+    assert finding.code == "payment_amount" and "106.92 after withholding" in finding.message
+
+
 def test_payment_amount() -> None:
     invoice = sample()
     payment = replace(invoice.payments[0], importo_cents=6400)

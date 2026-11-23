@@ -66,6 +66,10 @@ def _invoice(
         data=_date(_required(general, "Data")),
         numero=_required(general, "Numero"),
         importo_totale_cents=None if total is None else to_cents(_decimal(total)),
+        ritenuta_cents=sum(
+            to_cents(_decimal(_required(element, "ImportoRitenuta")))
+            for element in general.findall("DatiRitenuta")
+        ),
         cedente=cedente,
         cessionario=cessionario,
         lines=[_line(element) for element in goods.findall("DettaglioLinee")],

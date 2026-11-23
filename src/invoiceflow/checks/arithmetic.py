@@ -6,18 +6,21 @@ DatiGeneraliDocumento):
 1. line_total      PrezzoTotale = Quantita x PrezzoUnitario (Quantita missing = 1),
                    within LINE_TOLERANCE.
 2. taxable_amount  for every DatiRiepilogo, ImponibileImporto = the sum of PrezzoTotale of the
-                   lines with the same AliquotaIVA and Natura, rounded half up to the cent;
+                   lines with the same AliquotaIVA and Natura, rounded half up to the cent,
+                   within TAXABLE_TOLERANCE_CENTS (invoicing software rounds in different ways);
                    every (AliquotaIVA, Natura) used by a line has its DatiRiepilogo.
 3. vat_amount      Imposta = ImponibileImporto x AliquotaIVA / 100, rounded half up to the cent,
                    within VAT_TOLERANCE_CENTS.
 4. document_total  ImportoTotaleDocumento = sum of ImponibileImporto + sum of Imposta
                    (only when ImportoTotaleDocumento is present: it is optional).
-5. payment_amount  the ImportoPagamento of all instalments add up to ImportoTotaleDocumento.
+5. payment_amount  the ImportoPagamento of all instalments add up to ImportoTotaleDocumento,
+                   or to ImportoTotaleDocumento minus the withholding tax (DatiRitenuta), which
+                   the customer pays to the State instead of the supplier.
 
 The SdI applies its own, sometimes looser, tolerances; ours are tighter on purpose, because a
-correct invoice adds up to the cent. Known limits: withholding tax (DatiRitenuta), stamp duty
-(DatiBollo), discounts (ScontoMaggiorazione) and Arrotondamento are not in the shared model yet,
-so an invoice that uses them can be reported by rules 1, 4 or 5.
+correct invoice adds up to the cent. Known limits: stamp duty (DatiBollo), discounts
+(ScontoMaggiorazione) and Arrotondamento are not in the shared model yet, so an invoice that
+uses them can be reported by rules 1, 4 or 5.
 """
 
 from decimal import Decimal
@@ -27,6 +30,7 @@ from invoiceflow.model import Invoice
 from invoiceflow.money import from_cents, to_cents
 
 LINE_TOLERANCE = Decimal("0.01")  # euro
+TAXABLE_TOLERANCE_CENTS = 1
 VAT_TOLERANCE_CENTS = 1
 
 
@@ -58,7 +62,7 @@ def check_taxable_amounts(invoice: Invoice) -> list[Finding]:
         key = (summary.aliquota_iva, summary.natura)
         summarised.add(key)
         expected = to_cents(sums.get(key, Decimal(0)))
-        if expected != summary.imponibile_cents:
+        if abs(expected - summary.imponibile_cents) > TAXABLE_TOLERANCE_CENTS:
             findings.append(
                 Finding(
                     "taxable_amount",
@@ -116,14 +120,18 @@ def check_payment_amounts(invoice: Invoice) -> list[Finding]:
     if not amounts or invoice.importo_totale_cents is None:
         return []
     paid = sum(amounts)
-    if paid == invoice.importo_totale_cents:
+    net = invoice.importo_totale_cents - invoice.ritenuta_cents
+    if paid in (invoice.importo_totale_cents, net):
         return []
+    withholding = (
+        f" ({from_cents(net)} after withholding tax)" if invoice.ritenuta_cents else ""
+    )
     return [
         Finding(
             "payment_amount",
             "DatiPagamento/DettaglioPagamento/ImportoPagamento",
             f"the payments add up to {from_cents(paid)}, but ImportoTotaleDocumento is "
-            f"{from_cents(invoice.importo_totale_cents)}",
+            f"{from_cents(invoice.importo_totale_cents)}{withholding}",
         )
     ]
 
