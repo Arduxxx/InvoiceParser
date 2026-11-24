@@ -94,3 +94,12 @@ def test_invoice_summaries(connection: sqlite3.Connection, sample: Invoice) -> N
     )
     assert summaries[2].supplier == storage.display_name(sample.cedente)
 
+
+
+def test_invoice_detail(connection: sqlite3.Connection, sample: Invoice) -> None:
+    detail = reports.invoice_detail(connection, 1)
+    assert detail.header["Total"] == "€ 128.52"
+    assert sample.numero in detail.header["Document"]
+    assert len(detail.lines) == len(sample.lines)
+    assert len(detail.vat_summary) == len(sample.vat_summary)
+    assert [p["amount"] for p in detail.payments] == ["€ 64.26", "€ 64.26"]

@@ -135,6 +135,61 @@ def coming_due(
     return [DuePayment(*row) for row in rows if row[0] not in skip_ids]
 
 
+@dataclass(frozen=True)
+class InvoiceDetail:
+    """One archived invoice as the dashboard shows it: a header and three small tables,
+    with amounts already written in euros."""
+
+    header: dict[str, str]
+    lines: list[dict[str, str]]
+    vat_summary: list[dict[str, str]]
+    payments: list[dict[str, str]]
+
+
+def invoice_detail(connection: sqlite3.Connection, invoice_id: int) -> InvoiceDetail:
+    """Header, lines, VAT summary and payments of one invoice."""
+    supplier, vat, customer, tipo, numero, data, total, source = connection.execute(
+        "SELECT c.nome, c.id_paese || c.partita_iva, i.cessionario_nome, i.tipo_documento,"
+        f" i.numero, i.data, {storage.INVOICE_TOTAL_CENTS}, i.source_path"
+        " FROM invoices i JOIN cedenti c ON c.id = i.cedente_id WHERE i.id = ?",
+        (invoice_id,),
+    ).fetchone()
+    header = {
+        "Supplier": f"{supplier} ({vat})",
+        "Customer": customer,
+        "Document": f"{tipo} n. {numero} of {data}",
+        "Total": euros(total),
+        "File": source,
+    }
+    lines = [
+        {"#": str(n), "description": text, "quantity": quantity or "", "unit price": price,
+         "total": line_total, "VAT %": rate, "natura": natura}
+        for n, text, quantity, price, line_total, rate, natura in connection.execute(
+            "SELECT numero_linea, descrizione, quantita, prezzo_unitario, prezzo_totale,"
+            " aliquota_iva, natura FROM lines WHERE invoice_id = ? ORDER BY numero_linea",
+            (invoice_id,),
+        )
+    ]
+    vat_summary = [
+        {"VAT %": rate, "natura": natura, "taxable": euros(taxable), "VAT": euros(tax)}
+        for rate, natura, taxable, tax in connection.execute(
+            "SELECT aliquota_iva, natura, imponibile_cents, imposta_cents"
+            " FROM vat_summary WHERE invoice_id = ?",
+            (invoice_id,),
+        )
+    ]
+    payments = [
+        {"method": method, "due": due or "", "amount": "" if amount is None else euros(amount),
+         "IBAN": iban}
+        for method, due, amount, iban in connection.execute(
+            "SELECT modalita, data_scadenza, importo_cents, iban"
+            " FROM payments WHERE invoice_id = ?",
+            (invoice_id,),
+        )
+    ]
+    return InvoiceDetail(header, lines, vat_summary, payments)
+
+
 def euros(cents: int) -> str:
     """For display: 123456 -> "€ 1,234.56"."""
     return f"€ {from_cents(cents):,.2f}"

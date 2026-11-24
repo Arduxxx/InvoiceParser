@@ -7,7 +7,13 @@ import pytest
 
 from invoiceflow import storage
 from invoiceflow.generator import DatasetConfig, generate_dataset, write_dataset
-from invoiceflow.importers.ingest import ingest_folder, main, read_invoices
+from invoiceflow.importers.ingest import (
+    IngestReport,
+    ingest_file,
+    ingest_folder,
+    main,
+    read_invoices,
+)
 from tests.unit.test_p7m import make_p7m
 from tests.unit.test_xml_parser import SAMPLE
 
@@ -136,3 +142,13 @@ def test_generated_errors_are_stored_and_correct_invoices_are_clean(
     flagged = {Path(problem.source_path).stem for problem in storage.load_problems(connection)}
     planted = {g.file_id for g in dataset.invoices if g.label == "error"}
     assert flagged == planted
+
+
+def test_a_single_file_is_imported_from_its_bytes(connection: sqlite3.Connection) -> None:
+    # what the dashboard does with a file dropped on it: no folder, only a name and bytes
+    report = IngestReport()
+    ingest_file(Path("dropped.xml"), SAMPLE.read_bytes(), connection, report)
+    ingest_file(Path("dropped.xml"), SAMPLE.read_bytes(), connection, report)
+    ingest_file(Path("broken.pdf"), b"not a pdf", connection, report)
+    assert (report.imported, report.already_present) == (1, 1)
+    assert [name for name, _ in report.errors] == ["broken.pdf"]
