@@ -61,6 +61,8 @@ _VAT_TABLE_ROW = re.compile(
 _VAT_ON_AMOUNT = re.compile(rf"\bIVA\s+(?:al\s+)?{_RATE}\s+su\s+{_AMOUNT}{_EURO}{_AMOUNT}", _FLAGS)
 _VAT_SIMPLE = re.compile(rf"\bIVA\s+(?:al\s+)?{_RATE}{_EURO}{_AMOUNT}", _FLAGS)
 _TAXABLE = re.compile(rf"\bimponibile{_EURO}{_AMOUNT}", _FLAGS)
+# "Importo IVA € 0,00": the whole invoice charges no VAT (exempt, flat-rate scheme...)
+_NO_VAT = re.compile(rf"\b(?:importo|totale)\s+iva{_EURO}0+[.,]00\b", _FLAGS)
 _NATURA = re.compile(r"\bN[1-7](?:\.\d)?\b")
 _WITHHOLDING = re.compile(
     r"\britenuta(?:\s+d['’]acconto)?(?:\s*\(?(?:al\s+)?\d{1,2}(?:[.,]\d{1,2})?\s*%\)?)?"
@@ -338,8 +340,9 @@ def _withholding(text: str) -> int:
 
 
 def _vat_summaries(text: str) -> list[VatSummary]:
-    """Accepts a table ("22% 100,00 22,00"), "IVA 22% su 100,00: 22,00", or "Imponibile 100,00"
-    with "IVA 22% 22,00" when the invoice has a single rate."""
+    """Accepts a table ("22% 100,00 22,00"), "IVA 22% su 100,00: 22,00", "Imponibile 100,00"
+    with "IVA 22% 22,00" when the invoice has a single rate, or "Imponibile 100,00" with
+    "Importo IVA 0,00" when the invoice charges no VAT at all."""
     rows = [(m[1], m[2] or "", m[3], m[4]) for m in _VAT_TABLE_ROW.finditer(text)]
     rows = rows or [(m[1], "", m[2], m[3]) for m in _VAT_ON_AMOUNT.finditer(text)]
     if not rows:
@@ -347,6 +350,10 @@ def _vat_summaries(text: str) -> list[VatSummary]:
         vat = _VAT_SIMPLE.findall(text)
         if taxable and len(vat) == 1:
             rows = [(vat[0][0], "", taxable.group(1), vat[0][1])]
+        elif taxable and not vat and _NO_VAT.search(text):
+            # no VAT at all: the summary table, if any, has no percentage to anchor on, so the
+            # whole taxable amount becomes one summary at 0%
+            rows = [("0", "", taxable.group(1), "0,00")]
     if not rows:
         raise InvoiceFormatError("VAT summary not found in the PDF")
     natura = _NATURA.search(text)
