@@ -127,3 +127,17 @@ def test_a_bad_amount_is_reported() -> None:
     xml = sample_bytes().replace(b"<PrezzoTotale>90.00", b"<PrezzoTotale>novanta")
     with pytest.raises(InvoiceFormatError, match="not a number"):
         parse_invoices(xml)
+
+
+def test_withholding_taxes_are_added_up() -> None:
+    block = (
+        b"<DatiRitenuta><TipoRitenuta>RT01</TipoRitenuta><ImportoRitenuta>%s</ImportoRitenuta>"
+        b"<AliquotaRitenuta>20.00</AliquotaRitenuta><CausalePagamento>A</CausalePagamento>"
+        b"</DatiRitenuta>"
+    )
+    xml = SAMPLE.read_bytes().replace(
+        b"<ImportoTotaleDocumento>",
+        block % b"20.00" + block % b"1.60" + b"<ImportoTotaleDocumento>",
+    )
+    assert parse_invoices(xml)[0].ritenuta_cents == 2160
+    assert parse_invoices(SAMPLE.read_bytes())[0].ritenuta_cents == 0

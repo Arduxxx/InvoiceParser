@@ -58,6 +58,7 @@ class Invoice:
     data: date                         # Data emissione
     numero: str                        # es. "2026/042"
     importo_totale_cents: int | None = None   # ImportoTotaleDocumento è OPZIONALE
+    ritenuta_cents: int = 0            # somma di DatiRitenuta/ImportoRitenuta
 
     cedente: Party
     cessionario: Party

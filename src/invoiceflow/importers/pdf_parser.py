@@ -62,6 +62,11 @@ _VAT_ON_AMOUNT = re.compile(rf"\bIVA\s+(?:al\s+)?{_RATE}\s+su\s+{_AMOUNT}{_EURO}
 _VAT_SIMPLE = re.compile(rf"\bIVA\s+(?:al\s+)?{_RATE}{_EURO}{_AMOUNT}", _FLAGS)
 _TAXABLE = re.compile(rf"\bimponibile{_EURO}{_AMOUNT}", _FLAGS)
 _NATURA = re.compile(r"\bN[1-7](?:\.\d)?\b")
+_WITHHOLDING = re.compile(
+    r"\britenuta(?:\s+d['’]acconto)?(?:\s*\(?(?:al\s+)?\d{1,2}(?:[.,]\d{1,2})?\s*%\)?)?"
+    rf"{_EURO}-?\s*(?:EUR|€)?\s*{_AMOUNT}",
+    _FLAGS,
+)
 _SDI_MARK = re.compile(r"Dati\s+di\s+riepilogo\s+per\s+aliquota", _FLAGS)
 _SDI_NUMBER = r"(-?\d+(?:\.\d+)?)"
 _IBAN = re.compile(r"\bIT\s?\d{2}\s?[A-Z](?:\s?\d){10}(?:\s?[A-Z0-9]){12}\b")
@@ -93,6 +98,7 @@ def invoice_from_text(text: str, source_path: str = "", source_sha256: str = "")
         data=_issue_date(text),
         numero=_number(text),
         importo_totale_cents=total,
+        ritenuta_cents=_withholding(text),
         cedente=Party(
             denominazione=_supplier_name(text), id_paese="IT", partita_iva=supplier_vat
         ),
@@ -137,6 +143,10 @@ def _sdi_invoice(text: str, source_path: str, source_sha256: str) -> Invoice:
         ),
         numero=_required_field(head, r"Numero\s+documento:[ \t]*(.+)", "number").strip(),
         importo_totale_cents=None if total is None else to_cents(Decimal(total)),
+        ritenuta_cents=sum(
+            abs(to_cents(Decimal(amount)))
+            for amount in re.findall(rf"Importo\s+ritenuta:\s*{_SDI_NUMBER}", head, _FLAGS)
+        ),
         cedente=cedente,
         cessionario=_sdi_party(text[customer:general]),
         lines=_sdi_lines(text[lines_at:summary_at]),
@@ -318,6 +328,13 @@ def _total(text: str) -> int:
     if net:
         return _cents(net.group(1))
     raise InvoiceFormatError("invoice total not found in the PDF")
+
+
+def _withholding(text: str) -> int:
+    """The withholding tax, if the invoice shows one. Only the first mention counts, because
+    the same amount is often repeated in a summary."""
+    found = _WITHHOLDING.search(text)
+    return _cents(found.group(1)) if found else 0
 
 
 def _vat_summaries(text: str) -> list[VatSummary]:

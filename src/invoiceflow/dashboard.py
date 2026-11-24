@@ -3,8 +3,8 @@
 Reads the SQLite archive filled by the importer and shows: spend by month, supplier and
 category; payments coming due; invoices that failed the checks; suspicious invoices (anti-fraud
 rules); invoices uploaded more than once. Extra copies of a duplicated invoice are left out of
-every total, so nothing is counted twice, and so are invoices that failed the checks: their
-amounts cannot be trusted until the supplier corrects them.
+every total, so nothing is counted twice. Invoices that failed the checks stay in the totals,
+with a note: a real cost should not vanish because of a warning.
 """
 
 import sqlite3
@@ -51,7 +51,7 @@ def show(connection: sqlite3.Connection) -> None:
     extra_copies = {invoice.id for group in duplicates for invoice in group[1:]}
     problems = storage.load_problems(connection)
     with_errors = {problem.invoice_id for problem in problems}
-    spends = reports.load_spend(connection, skip_ids=extra_copies | with_errors)
+    spends = reports.load_spend(connection, skip_ids=extra_copies)
     flags = find_frauds(connection)
 
     invoices, total, errors, copies, suspicious = st.columns(5)
@@ -60,6 +60,12 @@ def show(connection: sqlite3.Connection) -> None:
     errors.metric("Failed the checks", len(with_errors))
     copies.metric("Duplicates found", len(extra_copies))
     suspicious.metric("Suspicious invoices", len({flag.invoice_id for flag in flags}))
+    counted_with_errors = len(with_errors - extra_copies)
+    if counted_with_errors:
+        st.caption(
+            f"Totals include {counted_with_errors} invoices that failed the checks:"
+            " see the list below."
+        )
 
     st.header("Spend by month")
     bar_chart(reports.total_by(spends, reports.by_month), "month", biggest_first=False)
@@ -91,7 +97,7 @@ def show(connection: sqlite3.Connection) -> None:
     if not problems:
         st.write("Every invoice passes the checks.")
     else:
-        st.caption("Left out of the spend until the supplier sends a corrected invoice.")
+        st.caption("Counted in the spend: check these amounts with the supplier.")
     for problem in problems:
         reasons = "\n".join(f"- {finding.message}" for finding in problem.findings)
         st.warning(

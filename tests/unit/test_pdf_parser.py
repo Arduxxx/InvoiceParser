@@ -199,6 +199,47 @@ def test_a_wrong_total_is_caught_by_the_checks() -> None:
     assert "document_total" in {finding.code for finding in check_invoice(invoice)}
 
 
+@pytest.mark.parametrize(
+    "label",
+    [
+        "Ritenuta d'acconto 20% EUR 200,00",
+        "Ritenuta d'acconto (20%): -200,00",
+        "Ritenuta: 200,00",
+    ],
+)
+def test_a_payment_net_of_withholding_passes_the_checks(label: str) -> None:
+    changed = text(
+        ("Totale documento EUR 1.220,00", f"Totale documento EUR 1.220,00\n{label}\n"
+                                          "Netto a pagare EUR 1.020,00"),
+    )
+    invoice = invoice_from_text(changed)
+    assert (invoice.ritenuta_cents, invoice.payments[0].importo_cents) == (20000, 102000)
+    assert check_invoice(invoice) == []
+
+
+def test_a_wrong_net_payment_is_still_reported() -> None:
+    changed = text(
+        ("Totale documento EUR 1.220,00", "Totale documento EUR 1.220,00\n"
+                                          "Ritenuta: 200,00\nNetto a pagare EUR 1.000,00"),
+    )
+    assert "payment_amount" in {f.code for f in check_invoice(invoice_from_text(changed))}
+
+
+def test_the_sdi_view_reads_withholding() -> None:
+    view = SDI_VIEW.replace(
+        "Importo totale documento: 61.00",
+        "Importo ritenuta: 6.00\nImporto ritenuta: 4.00\nImporto totale documento: 61.00",
+    ).replace("Importo: 61.00", "Importo: 51.00")
+    invoice = invoice_from_text(view)
+    assert invoice.ritenuta_cents == 1000
+    assert check_invoice(invoice) == []
+
+
+def test_one_cent_of_rounding_passes_in_the_sdi_view() -> None:
+    view = SDI_VIEW.replace("Valore totale: 50.00", "Valore totale: 50.01")
+    assert check_invoice(invoice_from_text(view)) == []
+
+
 def test_a_credit_note() -> None:
     changed = text(("FATTURA N. 2026/042", "NOTA DI CREDITO N. 2026/042"))
     assert invoice_from_text(changed).tipo_documento == "TD04"
