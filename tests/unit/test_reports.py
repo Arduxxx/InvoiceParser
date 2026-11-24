@@ -69,3 +69,28 @@ def test_coming_due(connection: sqlite3.Connection, sample: Invoice) -> None:
 def test_money_formatting() -> None:
     assert reports.euros(123456) == "€ 1,234.56"
     assert [reports.whole_euros(c) for c in (149, 150, 0)] == [1, 2, 0]
+
+
+def test_supplier_summary_and_removing_a_category(
+    connection: sqlite3.Connection, sample: Invoice
+) -> None:
+    vat = sample.cedente.partita_iva
+    [row] = reports.supplier_summary(connection, skip_ids=set())
+    assert (row.partita_iva, row.category, row.invoices, row.spend_cents) == (vat, "", 2, 25704)
+    assert reports.supplier_summary(connection, skip_ids={1})[0].invoices == 1
+
+    assert storage.set_category(connection, vat, "office")
+    assert reports.supplier_summary(connection, skip_ids=set())[0].category == "office"
+    assert storage.remove_category(connection, vat)
+    assert reports.supplier_summary(connection, skip_ids=set())[0].category == ""
+    assert not storage.remove_category(connection, vat)  # nothing left to remove
+
+
+def test_invoice_summaries(connection: sqlite3.Connection, sample: Invoice) -> None:
+    summaries = reports.invoice_summaries(connection, {2})
+    assert list(summaries) == [2]
+    assert (summaries[2].numero, summaries[2].data, summaries[2].total_cents) == (
+        "1", "2026-03-05", 12852,
+    )
+    assert summaries[2].supplier == storage.display_name(sample.cedente)
+

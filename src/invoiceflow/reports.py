@@ -37,6 +37,36 @@ class DuePayment:
     iban: str
 
 
+@dataclass(frozen=True)
+class SupplierRow:
+    """One supplier, with its category and what it was paid in total."""
+
+    partita_iva: str
+    name: str
+    category: str  # "" when the supplier has no category yet
+    invoices: int
+    spend_cents: int
+
+
+@dataclass(frozen=True)
+class InvoiceSummary:
+    """The few facts needed to recognise an invoice at a glance."""
+
+    numero: str
+    data: str  # ISO date
+    supplier: str
+    total_cents: int
+
+
+def invoice_summaries(connection: sqlite3.Connection, ids: set[int]) -> dict[int, InvoiceSummary]:
+    """Invoice id -> its number, date, supplier and total, for the given invoices."""
+    rows = connection.execute(
+        f"SELECT i.id, i.numero, i.data, c.nome, {storage.INVOICE_TOTAL_CENTS}"
+        " FROM invoices i JOIN cedenti c ON c.id = i.cedente_id"
+    ).fetchall()
+    return {row[0]: InvoiceSummary(*row[1:]) for row in rows if row[0] in ids}
+
+
 def load_spend(connection: sqlite3.Connection, skip_ids: set[int]) -> list[Spend]:
     """Every invoice except those in skip_ids (e.g. the extra copies of a duplicate).
     The amount is ImportoTotaleDocumento, or, when the invoice omits it (it is optional),
@@ -55,6 +85,28 @@ def load_spend(connection: sqlite3.Connection, skip_ids: set[int]) -> list[Spend
         sign = -1 if tipo == CREDIT_NOTE else 1
         spends.append(Spend(invoice_id, data, supplier, category or UNCATEGORISED, sign * amount))
     return spends
+
+
+def supplier_summary(connection: sqlite3.Connection, skip_ids: set[int]) -> list[SupplierRow]:
+    """Every supplier, even one without invoices, by name. Invoices in skip_ids are left out
+    and credit notes lower the spend, as in load_spend."""
+    rows = connection.execute(
+        "SELECT c.id, c.partita_iva, c.nome, COALESCE(sc.category, ''), i.id, i.tipo_documento,"
+        f" {storage.INVOICE_TOTAL_CENTS}"
+        " FROM cedenti c LEFT JOIN supplier_categories sc ON sc.cedente_id = c.id"
+        " LEFT JOIN invoices i ON i.cedente_id = c.id"
+        " ORDER BY c.nome, c.id"
+    ).fetchall()
+    summary: dict[int, SupplierRow] = {}
+    for supplier_id, vat, name, category, invoice_id, tipo, amount in rows:
+        row = summary.setdefault(supplier_id, SupplierRow(vat, name, category, 0, 0))
+        if invoice_id is None or invoice_id in skip_ids:
+            continue
+        sign = -1 if tipo == CREDIT_NOTE else 1
+        summary[supplier_id] = SupplierRow(
+            vat, name, category, row.invoices + 1, row.spend_cents + sign * amount
+        )
+    return list(summary.values())
 
 
 def total_by(spends: list[Spend], key: Callable[[Spend], str]) -> dict[str, int]:
