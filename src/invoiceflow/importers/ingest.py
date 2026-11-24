@@ -5,7 +5,6 @@
 Every invoice is checked while it is imported (amounts, VAT numbers, IBANs, dates, and the
 official XSD schema for XML files) and the problems found are stored with it, for the dashboard.
 A file that cannot be read is reported and skipped; the others are imported anyway.
-This is the sequential version; spreading the work over several cores comes later.
 """
 
 import argparse
@@ -68,19 +67,31 @@ def ingest_folder(folder: Path, connection: sqlite3.Connection) -> IngestReport:
     for path in invoice_files(folder):
         try:
             data = path.read_bytes()
-            invoices = read_invoices(path, data)
-            # the schema looks at the whole XML file, the other checks at each invoice in it
-            file_findings = [] if _is_pdf(path) else schema_findings(_xml_of(path, data))
-            for position, invoice in enumerate(invoices):
-                findings = file_findings + check_invoice(invoice)
-                if storage.save_invoice(connection, invoice, position, findings):
-                    report.imported += 1
-                    report.with_problems += bool(findings)
-                else:
-                    report.already_present += 1
-        except (InvoiceFormatError, ValueError, OSError) as error:
+        except OSError as error:
             report.errors.append((path.name, str(error)))
+            continue
+        ingest_file(path, data, connection, report)
     return report
+
+
+def ingest_file(
+    path: Path, data: bytes, connection: sqlite3.Connection, report: IngestReport
+) -> None:
+    """Import the invoices of one file, given its raw bytes, and add the outcome to report.
+    Used for each file of a folder, and by the dashboard for the files dropped on it."""
+    try:
+        invoices = read_invoices(path, data)
+        # the schema looks at the whole XML file, the other checks at each invoice in it
+        file_findings = [] if _is_pdf(path) else schema_findings(_xml_of(path, data))
+        for position, invoice in enumerate(invoices):
+            findings = file_findings + check_invoice(invoice)
+            if storage.save_invoice(connection, invoice, position, findings):
+                report.imported += 1
+                report.with_problems += bool(findings)
+            else:
+                report.already_present += 1
+    except (InvoiceFormatError, ValueError) as error:
+        report.errors.append((path.name, str(error)))
 
 
 def load_categories(csv_path: Path, connection: sqlite3.Connection) -> int:

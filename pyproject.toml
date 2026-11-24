@@ -9,7 +9,7 @@ description = "Reads invoices, checks they are correct and flags suspicious ones
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "streamlit>=1.35",
+    "streamlit>=1.40",
     "requests>=2.31",
     "pdfplumber>=0.11",
     "asn1crypto>=1.5",
