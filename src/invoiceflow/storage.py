@@ -242,6 +242,18 @@ def set_category(connection: sqlite3.Connection, partita_iva: str, category: str
     return cursor.rowcount > 0
 
 
+def remove_category(connection: sqlite3.Connection, partita_iva: str) -> bool:
+    """Take the category away from a supplier, e.g. after a typing mistake.
+    Returns False if that supplier had no category."""
+    with connection:
+        cursor = connection.execute(
+            "DELETE FROM supplier_categories"
+            " WHERE cedente_id IN (SELECT id FROM cedenti WHERE partita_iva = ?)",
+            (partita_iva.strip(),),
+        )
+    return cursor.rowcount > 0
+
+
 def _cedente_id(connection: sqlite3.Connection, cedente: Party) -> int:
     """The supplier is identified by its VAT number; the first name seen is kept."""
     if not cedente.id_paese or not cedente.partita_iva:
