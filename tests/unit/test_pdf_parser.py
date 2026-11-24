@@ -106,19 +106,27 @@ IBAN: IT60X0542811101000000123456
 def test_reads_the_official_sdi_view() -> None:
     invoice = invoice_from_text(SDI_VIEW)
     assert (invoice.numero, invoice.data, invoice.tipo_documento) == (
-        "2026/42", date(2026, 10, 15), "TD01",
+        "2026/42",
+        date(2026, 10, 15),
+        "TD01",
     )
     assert (invoice.cedente.partita_iva, invoice.cedente.denominazione) == (
-        "01234567897", "Rossi Informatica S.r.l.",
+        "01234567897",
+        "Rossi Informatica S.r.l.",
     )
     assert (invoice.cessionario.nome, invoice.cessionario.cognome) == ("Mario", "Bianchi")
     [line] = invoice.lines
     assert (line.quantita, line.prezzo_unitario, line.prezzo_totale) == (
-        Decimal("2.00"), Decimal("25.00"), Decimal("50.00"),
+        Decimal("2.00"),
+        Decimal("25.00"),
+        Decimal("50.00"),
     )
     [payment] = invoice.payments
     assert (payment.modalita, payment.data_scadenza, payment.importo_cents, payment.iban) == (
-        "MP05", date(2026, 11, 14), 6100, IBAN,
+        "MP05",
+        date(2026, 11, 14),
+        6100,
+        IBAN,
     )
     assert check_invoice(invoice) == []
 
@@ -209,8 +217,10 @@ def test_a_wrong_total_is_caught_by_the_checks() -> None:
 )
 def test_a_payment_net_of_withholding_passes_the_checks(label: str) -> None:
     changed = text(
-        ("Totale documento EUR 1.220,00", f"Totale documento EUR 1.220,00\n{label}\n"
-                                          "Netto a pagare EUR 1.020,00"),
+        (
+            "Totale documento EUR 1.220,00",
+            f"Totale documento EUR 1.220,00\n{label}\nNetto a pagare EUR 1.020,00",
+        ),
     )
     invoice = invoice_from_text(changed)
     assert (invoice.ritenuta_cents, invoice.payments[0].importo_cents) == (20000, 102000)
@@ -219,8 +229,10 @@ def test_a_payment_net_of_withholding_passes_the_checks(label: str) -> None:
 
 def test_a_wrong_net_payment_is_still_reported() -> None:
     changed = text(
-        ("Totale documento EUR 1.220,00", "Totale documento EUR 1.220,00\n"
-                                          "Ritenuta: 200,00\nNetto a pagare EUR 1.000,00"),
+        (
+            "Totale documento EUR 1.220,00",
+            "Totale documento EUR 1.220,00\nRitenuta: 200,00\nNetto a pagare EUR 1.000,00",
+        ),
     )
     assert "payment_amount" in {f.code for f in check_invoice(invoice_from_text(changed))}
 
@@ -290,3 +302,45 @@ def test_imported_with_xml_and_recognised_as_a_duplicate(tmp_path: Path) -> None
     assert report.imported == 2
     assert [name for name, _ in report.errors] == ["broken.pdf"]
     assert len(groups) == 1 and len(groups[0]) == 2
+
+
+NO_VAT = "\n".join(
+    [
+        "Studio Verdi",
+        "p.iva: 01234567897 - c.f.: 01234567897",
+        "Spett. Mario Bianchi",
+        "fattura n. 7/2026 del 03/11/2026",
+        "ART DESCRIZIONE PREZZO IMPORTO IVA",
+        "Lezioni private 1,00 300,00 300,00",
+        "Spese di trasferta 1,00 50,00 50,00",
+        "Totale imponibile € 350,00",
+        "Importo Iva € 0,00",
+        "Totale fattura € 350,00",
+        "Netto a pagare € 350,00",
+        "Riepilogo Iva:",
+        "Cod IVA Aliquota Imponibile Imposta",
+        "N2.2 300,00 0,00",
+        "N2.2 50,00 0,00",
+        f"iban: {IBAN}",
+    ]
+)
+
+
+def test_an_invoice_without_vat_has_one_summary_at_zero() -> None:
+    invoice = invoice_from_text(NO_VAT)
+    [summary] = invoice.vat_summary
+    assert (summary.aliquota_iva, summary.imponibile_cents, summary.imposta_cents) == (
+        Decimal("0.00"),
+        35000,
+        0,
+    )
+    assert summary.natura == "N2.2"
+    assert invoice.importo_totale_cents == 35000
+    assert check_invoice(invoice) == []
+
+
+def test_a_zero_vat_line_does_not_hide_a_missing_summary() -> None:
+    # VAT is charged somewhere but no summary can be read: still refused, never guessed
+    changed = NO_VAT.replace("Importo Iva € 0,00", "Importo Iva € 77,00")
+    with pytest.raises(InvoiceFormatError, match="VAT summary not found"):
+        invoice_from_text(changed)
