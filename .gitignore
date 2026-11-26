@@ -235,3 +235,11 @@ venv/
 .idea/
 .vscode/
 .DS_Store
+
+# LaTeX build files (the report)
+*.aux
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.out
+*.toc
