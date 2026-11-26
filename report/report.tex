@@ -1,0 +1,88 @@
+\documentclass[11pt,a4paper]{article}
+
+% --- Packages ---
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}      % use [italian] for Italian text
+\usepackage{amsmath, amssymb, amsthm, mathtools}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{eurosym}
+\geometry{margin=2.5cm}
+
+
+\title{InvoiceFlow\\[0.5em] \large Software Engineering project}
+\author{Lorenzo Arduini and Riccardo Striano}
+\date{\today}
+
+\begin{document}
+\maketitle
+
+\section*{What the project does}
+
+InvoiceFlow reads the invoices a freelancer or a small business receives, checks that each one
+is correct, finds the ones uploaded more than once and flags suspicious ones, such as a known
+supplier suddenly asking to be paid to a new bank account. It reads Italian e-invoices
+(FatturaPA XML, including signed \texttt{.xml.p7m} files) and Italian PDF invoices. It is
+written in Python and runs locally: from the command line, or through a Streamlit web app on
+\texttt{localhost} that shows spending, payments coming due and every problem found, each with
+an explanation. Running locally was deliberate: invoices contain names, VAT numbers, IBANs and
+addresses, so nothing leaves the user's machine, and we tested on real invoices only after
+anonymizing them.
+
+\section*{General components}
+
+A pipeline: importers turn each file into one shared invoice model, the checks run on it at
+import time, and the result goes into a SQLite archive, which duplicate and fraud detection read
+as a whole and the dashboard displays. Beside it sit an invoice generator and an anonymizer.
+
+\section*{Hurdles and interesting problems}
+
+\textbf{No two invoices fill the same fields.} FatturaPA has hundreds of fields, mostly optional,
+and every invoicing program fills a different subset, so a parser written around one supplier
+fails on the next. We first agreed on a small shared model holding only what the checks and
+fraud rules need, and wrote every reader (XML, \texttt{.p7m}, PDF) to fill it, treating a
+missing optional field as normal rather than as an error.
+
+\textbf{Correct invoices that look wrong.} A field the program does not understand can make a
+legitimate invoice look broken. An invoice with 0\% VAT above \euro{}77.47 carries a \euro{}2
+stamp duty (\emph{bollo}) added to the total, so the total no longer equals taxable amount plus
+VAT; withholding tax did the same to payments. Each time we had to choose between loosening the
+rule and teaching the model the new field. We kept the arithmetic exact to the cent and added
+the most common fields; stamp duty and discounts are still a known source of warnings.
+
+\textbf{Rules a fraudster can exploit.} With seed 2026 the fraud rules raised 475 false alarms
+on 9,498 regular invoices (5 per 100, against 0.01 with other seeds), 472 of them on one genuine
+supplier, Sudsoftware S.a.s. The look-alike rule takes the supplier it sees first as genuine,
+and the fake ``uSdsoftware S.a.s.'' had an invoice on the same day as the real one's first,
+imported earlier. Everything was inverted: the fake became the trusted supplier and every real
+invoice was reported as an impersonation. A fraudster who gets one invoice into the archive
+first gets the same result; judging who is genuine by a longer history would make this much
+harder. The unusual-amount rule flags totals above 2.5 times the supplier's largest earlier
+invoice, but every invoice that passes raises that bar: from a usual \euro{}1,000, invoices of
+\euro{}2,500, \euro{}6,250, \euro{}15,625 and \euro{}39,000 all pass unnoticed.
+
+\section*{Ideas}
+
+\textbf{Testing against invoices we made ourselves.} Real invoices with known frauds do not
+exist, so the generator produces realistic invoices with planted errors, frauds and duplicates,
+plus an answer key (\texttt{labels.csv}) to compare against. We tuned the rules on seed 42 and
+measured on a fresh seed, 12345: 10,000 invoices, with 464 errors, 472 frauds and 300
+duplicates. The checks caught all 464 errors, of all eight kinds, with no false alarm on 9,536
+invoices that should pass. Of the 342 frauds in scope, 317 were flagged (92.7\%): all look-alike
+suppliers and IBAN changes, and 98 of 123 unusual amounts, with one false alarm on 9,528 regular
+invoices. The other 130 use non-existent VAT numbers, which only the EU VIES service can detect.
+
+\textbf{Anonymizing without breaking the rules.} Random replacements would have made real
+invoices useless for testing, since the fraud rules depend on recognizing a supplier and its
+usual IBAN. With the same secret key, a real supplier always gets the same fake name, VAT number
+and IBAN, with check digits valid exactly when the original's were, so every check gives the
+same answer on the copy.
+
+\section*{Looking ahead}
+
+With a more precise invoice model, one that understands and can verify every field, InvoiceFlow
+could become a tool used by an AI agent set up to help a small business with its finances:
+reading every incoming invoice, warning before a suspicious one is paid, and keeping track of
+what is coming due.
+
+\end{document}

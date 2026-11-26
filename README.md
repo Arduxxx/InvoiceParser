@@ -52,7 +52,7 @@ The generator refuses to write into a folder that already holds invoices: choose
 
 ## Use your own invoices
 
-1. **Anonymize them** (recommended, and required for this course's real invoices):
+1. **Anonymize them:**
    ```
    make anonymize ORIGINALS=path/to/your/invoices ANONYMIZED=data/real/xml
    ```
@@ -112,30 +112,36 @@ disappears because of a warning.
 
 ## Results
 
-Measured on generated data, with seeds that were not used to tune the rules:
+The rules were tuned on a dataset generated with seed 42. They were measured on a fresh one,
+generated with seed 12345: 10,000 invoices, with 464 planted errors, 472 frauds and 300
+duplicates.
 
-| Measurement | Result |
-|---|---|
-| 1,000 invoices, each with one altered field | 1,000 errors caught |
-| 1,000 correct invoices | 0 false alarms |
-| 10,000 invoices with planted frauds | 95.3% of frauds caught, 0.05 false alarms per 100 invoices |
+| Measurement | Caught | Planted | False alarms |
+|---|---|---|---|
+| Errors, all eight kinds | 464 | 464 | 0 on 9,536 invoices that should pass |
+| Look-alike supplier | 107 | 107 | |
+| New bank account | 112 | 112 | |
+| Unusual amount | 98 | 123 | |
+| **Frauds in scope** | **317 (92.7%)** | **342** | 1 on 9,528 regular invoices (0.01 per 100) |
+| VAT number that does not exist | 0 | 130 | not built: needs EU VIES |
 
-On 24 distinct real, anonymized invoices from 3 suppliers there were no false alarms, and every
-field of the 18 PDFs that have a matching XML was read correctly. That sample is small, and all
-those PDFs use the official SdI layout.
-
-To reproduce the error measurement:
+To reproduce:
 
 ```
-python -m invoiceflow.generator --out data/generated/errors --n 1000 --seed 2001 --error-rate 1 --fraud-rate 0 --duplicate-rate 0
-python -m invoiceflow.checks.evaluate data/generated/errors
+make generate OUT=data/generated/seed12345 N=10000 SEED=12345
+python -m invoiceflow.checks.evaluate data/generated/seed12345
+python -m invoiceflow.antifraud.evaluate data/generated/seed12345
 ```
 
 ## Limits
 
 - **Not built:** checking that VAT numbers exist (EU VIES), and importing on several cores.
-- **PDFs:** scans are refused (no OCR), and foreign suppliers such as Amazon or Google are not
-  read. Outside the official SdI layout, item lines are not read.
+- **Look-alike supplier:** the supplier seen first is taken as the genuine one. If a fake's first
+  invoice comes before the real supplier's, the roles are swapped and every real invoice is
+  flagged. Seed 2026 does this: 472 false alarms, all on one supplier.
+- **Unusual amount:** every invoice that passes raises the limit, so amounts that grow by just
+  under 2.5 times at each step are never flagged.
+- **PDFs:** scans are refused (no OCR).  Outside the official SdI layout, item lines are not read.
 - **Not modelled:** stamp duty (*bollo*) and discounts, so invoices using them can get a warning.
 - **Signed files** named `.p7m` without `.xml` are not picked up by the import.
 - **Anonymized copies** keep dates, amounts and invoice numbers, and the look-alike supplier rule
